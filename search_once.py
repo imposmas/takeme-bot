@@ -29,7 +29,8 @@ from job_agents.hh_agent import HHAgent
 from tg_keyboards import vacancy_keyboard
 
 LIMIT_PER_PROFILE = 3  # сколько брать из каждого профиля поиска
-SEND_LIMIT = 3         # сколько всего карточек отправить в Telegram за прогон
+TOTAL_LIMIT = 5         # краш-тест: не вся выборка, а первые N по обоим профилям
+SEND_LIMIT = TOTAL_LIMIT  # сколько всего карточек отправить в Telegram за прогон
 
 _CURRENCY = {"RUR": "₽", "RUB": "₽", "USD": "$", "EUR": "€",
              "KZT": "₸", "UAH": "₴", "BYR": "Br", "BYN": "Br"}
@@ -100,6 +101,8 @@ async def main() -> None:
         work_schedule_by_days=HH_WORK_SCHEDULE,
     )
     print(f"Уникальных вакансий после склейки профилей: {len(vacancies)}")
+    vacancies = vacancies[:TOTAL_LIMIT]
+    print(f"Краш-тест: обрабатываю первые {len(vacancies)}")
 
     bot = Bot(TELEGRAM_BOT_TOKEN,
               default=DefaultBotProperties(parse_mode=ParseMode.HTML))
