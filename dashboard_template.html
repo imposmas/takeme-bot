@@ -1,0 +1,396 @@
+<title>Мониторинг откликов</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=PT+Serif:ital,wght@0,400;0,700;1,400&family=PT+Sans:wght@400;700&family=PT+Mono&display=swap">
+<style>
+  :root{
+    --bg:#f5f4f0;
+    --surface:#ffffff;
+    --surface-alt:#faf9f6;
+    --text:#1c1e1f;
+    --text-muted:#6b6f72;
+    --border:#e4e2db;
+    --accent:#29506b;
+    --accent-soft:#e7edf1;
+    --good:#2f8a53;
+    --good-soft:#e5f3ea;
+    --warn:#9c7a1f;
+    --warn-soft:#f5eedb;
+    --neutral:#83878a;
+    --neutral-soft:#eceae6;
+    --bad:#a33c34;
+    --bad-soft:#f7e6e3;
+    --shadow: 0 1px 2px rgba(28,30,31,.05), 0 4px 12px rgba(28,30,31,.04);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#14161a; --surface:#1b1e23; --surface-alt:#1f2329;
+      --text:#e7e8ea; --text-muted:#9aa0a6; --border:#2b2f36;
+      --accent:#7fb0d1; --accent-soft:#20303b;
+      --good:#57b884; --good-soft:#1c2e24;
+      --warn:#d6ac52; --warn-soft:#2e2718;
+      --neutral:#8d9296; --neutral-soft:#22262b;
+      --bad:#d97a70; --bad-soft:#332120;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.25);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#14161a; --surface:#1b1e23; --surface-alt:#1f2329;
+    --text:#e7e8ea; --text-muted:#9aa0a6; --border:#2b2f36;
+    --accent:#7fb0d1; --accent-soft:#20303b;
+    --good:#57b884; --good-soft:#1c2e24;
+    --warn:#d6ac52; --warn-soft:#2e2718;
+    --neutral:#8d9296; --neutral-soft:#22262b;
+    --bad:#d97a70; --bad-soft:#332120;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.25);
+  }
+
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:"PT Sans", system-ui, sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{ max-width:1180px; margin:0 auto; padding:40px 24px 80px; }
+
+  header h1{
+    font-family:"PT Serif", Georgia, serif;
+    font-weight:700; font-size:clamp(28px,4vw,38px);
+    margin:0 0 6px; text-wrap:balance;
+  }
+  header p{
+    margin:0; color:var(--text-muted); font-size:15px; max-width:65ch;
+  }
+  header .meta{ margin-top:4px; font-size:13px; color:var(--text-muted); font-family:"PT Mono",monospace; }
+
+  .stats{
+    display:grid; grid-template-columns:repeat(5,1fr); gap:12px;
+    margin:28px 0 24px;
+  }
+  .stat{
+    background:var(--surface); border:1px solid var(--border); border-radius:10px;
+    padding:16px 18px; box-shadow:var(--shadow);
+  }
+  .stat .num{
+    font-family:"PT Mono",monospace; font-size:26px; font-weight:700;
+    font-variant-numeric:tabular-nums; line-height:1;
+  }
+  .stat .label{ margin-top:6px; font-size:13px; color:var(--text-muted); }
+  .stat.applied .num{ color:var(--good); }
+  .stat.skipped .num{ color:var(--neutral); }
+  .stat.pending .num{ color:var(--warn); }
+
+  .controls{
+    display:flex; flex-wrap:wrap; align-items:center; gap:10px;
+    margin-bottom:16px;
+  }
+  .chip{
+    font-family:"PT Sans",sans-serif; font-size:13.5px; padding:7px 14px;
+    border-radius:999px; border:1px solid var(--border); background:var(--surface);
+    color:var(--text-muted); cursor:pointer; user-select:none;
+    transition:background .12s,color .12s,border-color .12s;
+  }
+  .chip:hover{ border-color:var(--accent); color:var(--text); }
+  .chip.active{ background:var(--accent); border-color:var(--accent); color:var(--surface); }
+  .chip .n{ font-family:"PT Mono",monospace; opacity:.75; margin-left:5px; }
+
+  .search{
+    margin-left:auto; position:relative;
+  }
+  .search input{
+    font-family:"PT Sans",sans-serif; font-size:13.5px; padding:8px 12px 8px 32px;
+    border-radius:8px; border:1px solid var(--border); background:var(--surface);
+    color:var(--text); width:220px; outline:none;
+  }
+  .search input:focus{ border-color:var(--accent); }
+  .search::before{
+    content:"⌕"; position:absolute; left:11px; top:50%; transform:translateY(-50%);
+    color:var(--text-muted); font-size:14px; pointer-events:none;
+  }
+
+  .table-scroll{
+    overflow-x:auto; border:1px solid var(--border); border-radius:12px;
+    background:var(--surface); box-shadow:var(--shadow);
+  }
+  table{ border-collapse:collapse; width:100%; min-width:920px; }
+  thead th{
+    text-align:left; font-size:11.5px; text-transform:uppercase; letter-spacing:.05em;
+    color:var(--text-muted); font-weight:700; padding:12px 14px;
+    border-bottom:1px solid var(--border); white-space:nowrap;
+    position:sticky; top:0; background:var(--surface); cursor:pointer;
+  }
+  thead th.sorted{ color:var(--accent); }
+  thead th .arrow{ font-size:10px; margin-left:3px; opacity:.7; }
+  tbody tr.row{ cursor:pointer; }
+  tbody tr.row:hover td{ background:var(--surface-alt); }
+  tbody td{
+    padding:12px 14px; border-bottom:1px solid var(--border); font-size:14px;
+    vertical-align:top;
+  }
+  tbody tr:last-child td{ border-bottom:none; }
+
+  .score{ font-family:"PT Mono",monospace; font-weight:700; font-variant-numeric:tabular-nums; font-size:15px; }
+  .score.high{ color:var(--good); }
+  .score.mid{ color:var(--accent); }
+  .score.low{ color:var(--text-muted); font-weight:400; }
+
+  .title{ font-weight:700; }
+  .company{ color:var(--text-muted); font-size:13px; margin-top:2px; }
+  .salary{ font-family:"PT Mono",monospace; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .fmt{ font-size:13px; color:var(--text-muted); white-space:nowrap; }
+
+  .pill{
+    display:inline-block; font-size:12px; padding:3px 10px; border-radius:999px;
+    font-weight:700; white-space:nowrap;
+  }
+  .pill.applied{ background:var(--good-soft); color:var(--good); }
+  .pill.skipped{ background:var(--neutral-soft); color:var(--neutral); }
+  .pill.pending{ background:var(--warn-soft); color:var(--warn); }
+
+  .hh-response{ margin-top:5px; font-size:11.5px; }
+  .hh-response.discard{ color:var(--bad); font-weight:700; }
+  .hh-response.viewed{ color:var(--text-muted); }
+
+  tr.detail td{
+    background:var(--surface-alt); padding:0 14px 18px; border-bottom:1px solid var(--border);
+  }
+  .detail-inner{ padding-top:2px; max-width:80ch; }
+  .detail-inner h4{
+    margin:14px 0 4px; font-size:11.5px; text-transform:uppercase; letter-spacing:.05em;
+    color:var(--text-muted); font-weight:700;
+  }
+  .detail-inner p{ margin:0; font-size:14px; line-height:1.55; }
+  .detail-inner a{ color:var(--accent); }
+  .letter-box{
+    background:var(--surface); border:1px solid var(--border); border-radius:8px;
+    padding:10px 12px; font-size:13.5px; line-height:1.5; white-space:pre-wrap;
+  }
+
+  .empty{ padding:48px; text-align:center; color:var(--text-muted); }
+
+  footer{ margin-top:22px; font-size:12.5px; color:var(--text-muted); }
+  footer code{ font-family:"PT Mono",monospace; background:var(--surface-alt); padding:1px 5px; border-radius:4px; }
+
+  @media (max-width:760px){
+    .stats{ grid-template-columns:repeat(2,1fr); }
+    .search{ margin-left:0; width:100%; }
+    .search input{ width:100%; }
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Мониторинг откликов</h1>
+    <p>Снимок базы TakeMe — вакансии HH.ru, оценка LLM-матчинга и статус по каждой.</p>
+    <div class="meta" id="meta"></div>
+  </header>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="controls" id="filters"></div>
+
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th data-sort="match_score">Матч <span class="arrow"></span></th>
+          <th data-sort="title">Вакансия <span class="arrow"></span></th>
+          <th data-sort="salary_from">З/п <span class="arrow"></span></th>
+          <th>Формат · опыт</th>
+          <th data-sort="status">Статус <span class="arrow"></span></th>
+          <th data-sort="found_at">Найдена <span class="arrow"></span></th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+  <div class="empty" id="empty" hidden>Ничего не найдено под текущий фильтр.</div>
+
+  <footer>
+    Порог отправки в Telegram — <code>match_score ≥ 60</code>. «Не прошло порог» — вакансия оценена, но LLM сочла её недостаточно релевантной, в Telegram не уходила. Клик по строке разворачивает разбор LLM и текст письма (если откликались.)
+  </footer>
+</div>
+
+<script>
+  const DATA = __DATA_JSON__;
+
+  const WORK_FORMAT_LABELS = { ON_SITE:"офис", REMOTE:"удалённо", HYBRID:"гибрид", FIELD_WORK:"разъездной" };
+  const EXPERIENCE_LABELS = {
+    noExperience:"без опыта", between1And3:"1–3 года",
+    between3And6:"3–6 лет", moreThan6:"6+ лет",
+  };
+  const CURRENCY = { RUR:"₽", RUB:"₽", USD:"$", EUR:"€", KZT:"₸", UAH:"₴" };
+
+  function fmtSalary(v){
+    const sign = CURRENCY[v.salary_currency] || v.salary_currency || "₽";
+    const money = n => n.toLocaleString("ru-RU") + " " + sign;
+    if (v.salary_from && v.salary_to) return money(v.salary_from) + " – " + money(v.salary_to);
+    if (v.salary_from) return "от " + money(v.salary_from);
+    if (v.salary_to) return "до " + money(v.salary_to);
+    return "—";
+  }
+  function fmtFormat(raw){
+    if (!raw) return "—";
+    return raw.split(",").filter(Boolean).map(c => WORK_FORMAT_LABELS[c] || c).join("/");
+  }
+  function fmtExperience(raw){ return raw ? (EXPERIENCE_LABELS[raw] || raw) : "—"; }
+  function fmtDate(iso){
+    if (!iso) return "—";
+    const d = new Date(iso.replace(" ", "T") + "Z");
+    return d.toLocaleDateString("ru-RU", { day:"2-digit", month:"2-digit" }) + " " +
+           d.toLocaleTimeString("ru-RU", { hour:"2-digit", minute:"2-digit" });
+  }
+  function scoreClass(s){
+    if (s == null) return "low";
+    if (s >= 75) return "high";
+    if (s >= 60) return "mid";
+    return "low";
+  }
+  function statusInfo(status){
+    if (status === "applied") return { label:"✅ Отклик отправлен", pill:"applied" };
+    if (status === "skipped") return { label:"Пропущено", pill:"skipped" };
+    if (status === "sent_to_tg") return { label:"Ждёт решения", pill:"pending" };
+    return { label:"Не прошло порог", pill:"skipped" };
+  }
+  function escapeHtml(s){
+    return (s || "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+  }
+
+  let state = { filter:"all", sortKey:"match_score", sortDir:"desc", query:"", openId:null };
+
+  function computeStats(){
+    const total = DATA.vacancies.length;
+    const applied = DATA.vacancies.filter(v => v.status === "applied").length;
+    const skipped = DATA.vacancies.filter(v => v.status === "skipped").length;
+    const pending = DATA.vacancies.filter(v => v.status === "sent_to_tg").length;
+    const scores = DATA.vacancies.map(v => v.match_score).filter(s => s != null);
+    const avg = scores.length ? (scores.reduce((a,b)=>a+b,0) / scores.length) : 0;
+    return { total, applied, skipped, pending, avg };
+  }
+
+  function renderStats(){
+    const s = computeStats();
+    document.getElementById("stats").innerHTML = `
+      <div class="stat"><div class="num">${s.total}</div><div class="label">Просмотрено вакансий</div></div>
+      <div class="stat applied"><div class="num">${s.applied}</div><div class="label">Откликов отправлено</div></div>
+      <div class="stat skipped"><div class="num">${s.skipped}</div><div class="label">Пропущено</div></div>
+      <div class="stat pending"><div class="num">${s.pending}</div><div class="label">Ждут решения</div></div>
+      <div class="stat"><div class="num">${s.avg.toFixed(0)}</div><div class="label">Средний матч, из 100</div></div>
+    `;
+    document.getElementById("meta").textContent =
+      "Снимок от " + new Date().toLocaleString("ru-RU", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" });
+  }
+
+  function renderFilters(){
+    const s = computeStats();
+    const notPassed = s.total - s.applied - s.skipped - s.pending;
+    const discardCount = DATA.vacancies.filter(v => v.employer_response === "discard").length;
+    const items = [
+      { key:"all", label:"Все", n:s.total },
+      { key:"applied", label:"Отклики", n:s.applied },
+      { key:"employer_discard", label:"Отказы HH", n:discardCount },
+      { key:"sent_to_tg", label:"Ждут решения", n:s.pending },
+      { key:"skipped", label:"Пропущенные", n:s.skipped },
+      { key:"new", label:"Не прошли порог", n:notPassed },
+    ];
+    const chips = items.map(it =>
+      `<div class="chip ${state.filter===it.key?'active':''}" data-filter="${it.key}">${it.label}<span class="n">${it.n}</span></div>`
+    ).join("");
+    document.getElementById("filters").innerHTML = chips + `
+      <div class="search"><input id="search" type="text" placeholder="Поиск по должности/компании…" value="${escapeHtml(state.query)}"></div>
+    `;
+    document.querySelectorAll(".chip").forEach(el => el.addEventListener("click", () => {
+      state.filter = el.dataset.filter; state.openId = null; render();
+    }));
+    document.getElementById("search").addEventListener("input", e => {
+      state.query = e.target.value; renderTable();
+    });
+  }
+
+  function getFiltered(){
+    let rows = DATA.vacancies.slice();
+    if (state.filter === "employer_discard") rows = rows.filter(v => v.employer_response === "discard");
+    else if (state.filter !== "all") rows = rows.filter(v => v.status === state.filter);
+    if (state.query.trim()){
+      const q = state.query.trim().toLowerCase();
+      rows = rows.filter(v =>
+        (v.title||"").toLowerCase().includes(q) || (v.company||"").toLowerCase().includes(q)
+      );
+    }
+    rows.sort((a,b) => {
+      let av = a[state.sortKey], bv = b[state.sortKey];
+      if (av == null) av = state.sortKey === "match_score" ? -1 : "";
+      if (bv == null) bv = state.sortKey === "match_score" ? -1 : "";
+      if (typeof av === "string") { av = av.toLowerCase(); bv = (bv||"").toLowerCase(); }
+      const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      return state.sortDir === "asc" ? cmp : -cmp;
+    });
+    return rows;
+  }
+
+  function renderTable(){
+    const rows = getFiltered();
+    document.getElementById("empty").hidden = rows.length > 0;
+    const tbody = document.getElementById("tbody");
+    tbody.innerHTML = rows.map(v => {
+      const st = statusInfo(v.status);
+      const sc = v.match_score;
+      const apps = DATA.applications[String(v.id)] || [];
+      const isOpen = state.openId === v.id;
+      let hhResponse = "";
+      if (v.employer_response === "discard") hhResponse = `<div class="hh-response discard">✕ отказ на HH</div>`;
+      else if (v.employer_response === "viewed") hhResponse = `<div class="hh-response viewed">просмотрено</div>`;
+      let rowHtml = `
+        <tr class="row" data-id="${v.id}">
+          <td><span class="score ${scoreClass(sc)}">${sc != null ? sc.toFixed(0) : "—"}</span></td>
+          <td><div class="title">${escapeHtml(v.title)}</div><div class="company">${escapeHtml(v.company)}</div></td>
+          <td class="salary">${fmtSalary(v)}</td>
+          <td class="fmt">${fmtFormat(v.work_format)}<br>${fmtExperience(v.experience)}</td>
+          <td><span class="pill ${st.pill}">${st.label}</span>${hhResponse}</td>
+          <td class="fmt">${fmtDate(v.found_at)}</td>
+        </tr>`;
+      if (isOpen){
+        const letterHtml = apps.length
+          ? apps.map(a => `<h4>Письмо (${a.status === 'applied' ? 'отправлено' : 'не доставлено'}, ${fmtDate(a.applied_at)})</h4><div class="letter-box">${escapeHtml(a.cover_letter || "—")}</div>`).join("")
+          : "";
+        rowHtml += `
+        <tr class="detail"><td colspan="6"><div class="detail-inner">
+          <h4>Разбор LLM</h4>
+          <p>${escapeHtml(v.match_reason) || "—"}</p>
+          ${letterHtml}
+          <h4>Ссылка</h4>
+          <p><a href="${v.url}" target="_blank" rel="noopener">${v.url}</a></p>
+        </div></td></tr>`;
+      }
+      return rowHtml;
+    }).join("");
+
+    tbody.querySelectorAll("tr.row").forEach(tr => tr.addEventListener("click", () => {
+      const id = Number(tr.dataset.id);
+      state.openId = state.openId === id ? null : id;
+      renderTable();
+    }));
+  }
+
+  function renderSortHeaders(){
+    document.querySelectorAll("th[data-sort]").forEach(th => {
+      th.classList.toggle("sorted", th.dataset.sort === state.sortKey);
+      const arrow = th.querySelector(".arrow");
+      arrow.textContent = th.dataset.sort === state.sortKey ? (state.sortDir === "asc" ? "▲" : "▼") : "";
+      th.onclick = () => {
+        if (state.sortKey === th.dataset.sort) state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+        else { state.sortKey = th.dataset.sort; state.sortDir = th.dataset.sort === "match_score" ? "desc" : "asc"; }
+        state.openId = null;
+        render();
+      };
+    });
+  }
+
+  function render(){
+    renderStats();
+    renderFilters();
+    renderSortHeaders();
+    renderTable();
+  }
+
+  render();
+</script>

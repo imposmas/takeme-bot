@@ -4,3 +4,4 @@ venv/
 sessions/
 __pycache__/
 resume.md
+dashboard_export.html
