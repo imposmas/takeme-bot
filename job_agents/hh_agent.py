@@ -376,14 +376,11 @@ class HHAgent(JobAgent):
            заполнить [data-qa=vacancy-response-popup-form-letter-input] → клик
            [data-qa=vacancy-response-submit-popup].
         B) Мгновенный отклик — сам клик по кнопке уже отправляет отклик БЕЗ
-           формы, письмо (если нужно) прикладывается отдельно через всплывающий
-           после отклика блок. Этот блок не наблюдался вживую (спровоцировать
-           его — значит реально откликнуться), селекторы взяты из фраз
-           интерфейса ("Приложить сопроводительное письмо" /
-           "Написать сопроводительное" / плейсхолдер / "Отправить") — они найдены
-           в переводах, зашитых в саму страницу HH, но сам блок не проверялся.
-           Если что-то не найдётся — не паникуем, откликом это не считаем
-           неудачей, просто письмо будет не приложено (self.last_apply_note).
+           формы. Письмо в этом случае прикладывается отдельно, ПОСЛЕ отклика,
+           через чат с работодателем (см. _attach_letter_after_instant_apply,
+           флоу проверен вживую). Если что-то не найдётся — не паникуем,
+           откликом это не считаем неудачей, просто письмо будет не приложено
+           (self.last_apply_note).
 
         Успех отклика (факт того, что он вообще создан) подтверждаем ОТДЕЛЬНЫМ
         заходом на страницу вакансии и проверкой applicantVacancyResponseStatuses
@@ -449,10 +446,10 @@ class HHAgent(JobAgent):
                     # по верхней кнопке уже отправил отклик как есть.
                     if cover_letter:
                         attached = await self._attach_letter_after_instant_apply(
-                            page, cover_letter
+                            page, vacancy_id, cover_letter
                         )
                         self.last_apply_note = (
-                            "письмо приложено отдельным сообщением (мгновенный отклик)"
+                            "мгновенный отклик — письмо приложено через чат"
                             if attached
                             else "мгновенный отклик — письмо НЕ приложено, добавь вручную"
                         )
@@ -461,35 +458,64 @@ class HHAgent(JobAgent):
 
         return await self._confirm_applied(vacancy_id)
 
-    async def _attach_letter_after_instant_apply(self, page: Page, cover_letter: str) -> bool:
-        """Best-effort прикладывание письма после мгновенного отклика (ветка B).
+    async def _attach_letter_after_instant_apply(
+        self, page: Page, vacancy_id: str, cover_letter: str
+    ) -> bool:
+        """Прикладывает письмо к уже созданному (мгновенному) отклику.
 
-        Селекторы по видимому русскому тексту, а не по data-qa — сам блок вживую
-        не наблюдался (см. apply()), текст взят из переводов на странице HH.
+        Флоу проверен ВЖИВУЮ и реально отправляет письмо, поэтому вызывать
+        только когда отклик уже точно создан:
+        /applicant/negotiations → карточка отклика по vacancy_id →
+        [data-qa=open_chat] открывает встроенный чат-виджет (iframe
+        chatik.hh.ru) → в чате есть системная ссылка
+        [data-qa=chatik-chat-message-applicant-action] («Добавить
+        сопроводительное») → клик переводит поле ввода в режим письма →
+        текст в [data-qa=text-input] внутри этого iframe → Enter отправляет
+        (письмо приезжает в тот же «Отклик на вакансию», а не отдельным
+        сообщением).
+
         Любая неудача — тихий False, а не исключение: отклик уже случился,
-        оставить его без письма не страшно.
+        оставить его без письма не страшно, просто предупредим пользователя
+        через self.last_apply_note.
         """
         try:
-            opener = page.get_by_text("Приложить сопроводительное письмо", exact=False).first
-            if await opener.count() == 0:
-                opener = page.get_by_text("Написать сопроводительное", exact=False).first
-            if await opener.count() == 0:
-                return False
-            await opener.click()
-            await page.wait_for_timeout(500)
+            await page.goto("https://hh.ru/applicant/negotiations",
+                            wait_until="domcontentloaded")
+            await page.wait_for_timeout(2000)
 
-            textarea = page.get_by_placeholder(
-                "Почему именно ваша кандидатура должна заинтересовать работодателя"
+            item = page.locator(
+                f'[data-qa="negotiations-item"]:has(a[href*="{vacancy_id}"])'
             ).first
-            if await textarea.count() == 0:
+            if await item.count() == 0:
                 return False
-            await textarea.fill(cover_letter)
-            await page.wait_for_timeout(300)
 
-            submit = page.get_by_role("button", name="Отправить", exact=True).first
-            if await submit.count() == 0:
+            chat_btn = item.locator('[data-qa="open_chat"]').first
+            if await chat_btn.count() == 0:
                 return False
-            await submit.click()
+            await chat_btn.click()
+            await page.wait_for_timeout(2500)
+
+            chat_frame = next(
+                (fr for fr in page.frames if "chatik.hh.ru/chat" in (fr.url or "")),
+                None,
+            )
+            if chat_frame is None:
+                return False
+
+            action = chat_frame.locator(
+                '[data-qa="chatik-chat-message-applicant-action"]'
+            ).first
+            if await action.count():
+                await action.click()
+                await page.wait_for_timeout(1000)
+
+            text_input = chat_frame.locator('[data-qa="text-input"]').first
+            if await text_input.count() == 0:
+                return False
+            await text_input.click()
+            await text_input.fill(cover_letter)
+            await page.wait_for_timeout(300)
+            await text_input.press("Enter")
             await page.wait_for_timeout(1500)
             return True
         except Exception:

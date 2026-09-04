@@ -28,8 +28,8 @@ from db import Application, Platform, Session, Vacancy, init_db
 from job_agents.hh_agent import HHAgent
 from tg_keyboards import vacancy_keyboard
 
-LIMIT_PER_PROFILE = 3  # сколько брать из каждого профиля поиска
-TOTAL_LIMIT = 5         # краш-тест: не вся выборка, а первые N по обоим профилям
+LIMIT_PER_PROFILE = 6  # сколько брать из каждого профиля поиска
+TOTAL_LIMIT = 12         # краш-тест: не вся выборка, а первые N по обоим профилям
 SEND_LIMIT = TOTAL_LIMIT  # сколько всего карточек отправить в Telegram за прогон
 
 _CURRENCY = {"RUR": "₽", "RUB": "₽", "USD": "$", "EUR": "€",
