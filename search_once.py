@@ -24,12 +24,12 @@ from config import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
 )
-from db import Application, Platform, Session, Vacancy, init_db
+from db import Application, Platform, Session, Vacancy, init_db, record_agent_session
 from job_agents.hh_agent import HHAgent
 from tg_keyboards import vacancy_keyboard
 
-LIMIT_PER_PROFILE = 6  # сколько брать из каждого профиля поиска
-TOTAL_LIMIT = 12         # краш-тест: не вся выборка, а первые N по обоим профилям
+LIMIT_PER_PROFILE = 10  # сколько брать из каждого профиля поиска
+TOTAL_LIMIT = 20         # краш-тест: не вся выборка, а первые N по обоим профилям
 SEND_LIMIT = TOTAL_LIMIT  # сколько всего карточек отправить в Telegram за прогон
 
 _CURRENCY = {"RUR": "₽", "RUB": "₽", "USD": "$", "EUR": "€",
@@ -88,6 +88,7 @@ async def main() -> None:
     if not agent.has_saved_session():
         print("Сессии HH нет — открываю окно для входа…")
         await agent.login()
+    await record_agent_session("hh", agent.storage_state_path)
 
     print(
         f"Поиск: text={HH_SEARCH_TEXT!r}, профилей={len(HH_SEARCH_PROFILES)}, "

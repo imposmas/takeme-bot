@@ -109,6 +109,37 @@ async def init_db() -> None:
         await session.commit()
 
 
+async def record_agent_session(
+    platform_name: str, storage_state_path: str, is_valid: bool = True
+) -> None:
+    """Апсерт agent_sessions — по одной строке на площадку.
+
+    Вызывать после того, как убедились, что сессия рабочая (например, сразу
+    после успешного login() или после успешного поиска на уже сохранённой
+    сессии) — is_valid и last_login_at отражают факт «сессия только что
+    подтверждена рабочей», а не момент физического ввода логина/пароля.
+    """
+    async with Session() as session:
+        platform = (
+            await session.execute(select(Platform).where(Platform.name == platform_name))
+        ).scalar_one()
+
+        row = (
+            await session.execute(
+                select(AgentSession).where(AgentSession.platform_id == platform.id)
+            )
+        ).scalar_one_or_none()
+
+        if row is None:
+            row = AgentSession(platform_id=platform.id)
+            session.add(row)
+
+        row.storage_state_path = storage_state_path
+        row.last_login_at = datetime.utcnow()
+        row.is_valid = is_valid
+        await session.commit()
+
+
 if __name__ == "__main__":
     import asyncio
 
