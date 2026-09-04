@@ -110,13 +110,25 @@ async def on_apply(callback: CallbackQuery) -> None:
     """✅ на карточке вакансии — генерирует письмо и показывает на подтверждение
     прямо в той же карточке, отклик пока НЕ отправляется."""
     vacancy_id = _vacancy_id(callback.data)
-    await callback.answer("Генерирую письмо…")
 
     vacancy = await _get_vacancy(vacancy_id)
     if vacancy is None:
+        await callback.answer()
         await callback.message.answer("Вакансия не найдена в БД")
         return
 
+    if vacancy.status == "applied":
+        # Карточка могла остаться с кнопками, хотя отклик уже реально
+        # состоялся (например, обнаружился как «уже откликались» на HH) —
+        # не генерируем письмо впустую, просто приводим карточку в порядок.
+        await callback.answer("Уже откликались")
+        await callback.message.edit_text(
+            _with_status(vacancy, "✅ Отклик уже был отправлен ранее"),
+            reply_markup=None,
+        )
+        return
+
+    await callback.answer("Генерирую письмо…")
     await callback.message.edit_text(
         _with_status(vacancy, "⏳ Генерирую сопроводительное письмо…"),
         reply_markup=None,
