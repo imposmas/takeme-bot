@@ -358,10 +358,95 @@ class HHAgent(JobAgent):
         text = unescape(text)
         return re.sub(r"[ \t]+", " ", text).strip()
 
-    # --- отклик (позже) -----------------------------------------
+    # --- отклик --------------------------------------------------------
 
     async def apply(self, vacancy_id: str, cover_letter: str | None) -> bool:
-        raise NotImplementedError("HHAgent.apply — позже")
+        """Откликается на вакансию HH.
+
+        Флоу подсмотрен вживую на реальной вакансии (клик по кнопке отклика +
+        заполнение письма — БЕЗ финального сабмита, чтобы не отправить настоящий
+        отклик во время разработки):
+        hh.ru/vacancy/<id> → клик [data-qa=vacancy-response-link-top] → переход
+        на /applicant/vacancy_response?vacancyId=… (резюме подставляется само,
+        если оно одно) → если есть письмо — раскрыть
+        [data-qa=vacancy-response-letter-toggle] и заполнить
+        [data-qa=vacancy-response-popup-form-letter-input] → клик
+        [data-qa=vacancy-response-submit-popup].
+
+        Успех отклика подтверждаем ОТДЕЛЬНЫМ заходом на страницу вакансии и
+        проверкой applicantVacancyResponseStatuses (та же логика, что и
+        «уже откликались» в search()) — это надёжнее, чем гадать про текст
+        тоста/редиректа, который вживую не проверялся.
+        """
+        if not self.has_saved_session():
+            raise RuntimeError("Нет сессии HH — сначала выполни login()")
+
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=self.headless)
+            context = await browser.new_context(storage_state=self.storage_state_path)
+            page = await context.new_page()
+            try:
+                await page.goto(f"https://hh.ru/vacancy/{vacancy_id}",
+                                wait_until="domcontentloaded")
+                await page.wait_for_timeout(1000)
+
+                link = page.locator('[data-qa="vacancy-response-link-top"]').first
+                if await link.count() == 0:
+                    state = await self._initial_state(page)
+                    if state and self._applied_from_state(state, vacancy_id):
+                        return True  # уже откликались раньше
+                    raise RuntimeError("Кнопка отклика не найдена на странице вакансии")
+
+                try:
+                    async with page.expect_navigation(
+                        wait_until="domcontentloaded", timeout=8000
+                    ):
+                        await link.click()
+                except PlaywrightTimeoutError:
+                    pass  # возможно, форма открылась модалкой на этой же странице
+
+                await page.wait_for_timeout(1500)
+
+                if cover_letter:
+                    toggle = page.locator(
+                        '[data-qa="vacancy-response-letter-toggle"]'
+                    ).first
+                    if await toggle.count():
+                        await toggle.click()
+                        await page.wait_for_timeout(500)
+                    textarea = page.locator(
+                        '[data-qa="vacancy-response-popup-form-letter-input"]'
+                    ).first
+                    if await textarea.count():
+                        await textarea.fill(cover_letter)
+                        await page.wait_for_timeout(300)
+
+                submit = page.locator('[data-qa="vacancy-response-submit-popup"]').first
+                if await submit.count() == 0:
+                    raise RuntimeError(
+                        "Кнопка отправки отклика не найдена — форма могла измениться"
+                    )
+
+                await submit.click()
+                await page.wait_for_timeout(2500)
+            finally:
+                await browser.close()
+
+        return await self._confirm_applied(vacancy_id)
+
+    async def _confirm_applied(self, vacancy_id: str) -> bool:
+        """Отдельным заходом проверяет, появилась ли вакансия в откликах."""
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=self.headless)
+            context = await browser.new_context(storage_state=self.storage_state_path)
+            page = await context.new_page()
+            try:
+                await page.goto(f"https://hh.ru/vacancy/{vacancy_id}",
+                                wait_until="domcontentloaded")
+                state = await self._initial_state(page)
+                return bool(state and self._applied_from_state(state, vacancy_id))
+            finally:
+                await browser.close()
 
 
 if __name__ == "__main__":

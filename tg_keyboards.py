@@ -1,0 +1,17 @@
+"""Инлайн-клавиатуры Telegram-бота — общие между search_once.py (отправка
+карточек) и takemebot.py (обработка нажатий), чтобы callback_data не разъехались.
+"""
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+
+def vacancy_keyboard(vacancy_id: int) -> InlineKeyboardMarkup:
+    """vacancy_id — id строки в нашей таблице vacancies (не id на площадке)."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Откликнуться", callback_data=f"apply:{vacancy_id}"),
+                InlineKeyboardButton(text="❌ Пропустить", callback_data=f"skip:{vacancy_id}"),
+                InlineKeyboardButton(text="✏️ Своим текстом", callback_data=f"custom:{vacancy_id}"),
+            ]
+        ]
+    )

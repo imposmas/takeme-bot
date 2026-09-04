@@ -26,6 +26,7 @@ from config import (
 )
 from db import Application, Platform, Session, Vacancy, init_db
 from job_agents.hh_agent import HHAgent
+from tg_keyboards import vacancy_keyboard
 
 LIMIT_PER_PROFILE = 3  # сколько брать из каждого профиля поиска
 SEND_LIMIT = 3         # сколько всего карточек отправить в Telegram за прогон
@@ -170,7 +171,10 @@ async def main() -> None:
                     )
                     continue
 
-                await bot.send_message(TELEGRAM_CHAT_ID, _card(row, data))
+                await bot.send_message(
+                    TELEGRAM_CHAT_ID, _card(row, data),
+                    reply_markup=vacancy_keyboard(row.id),
+                )
                 row.status = "sent_to_tg"
                 sent += 1
 
