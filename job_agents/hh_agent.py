@@ -623,6 +623,13 @@ class HHAgent(JobAgent):
                 await page.wait_for_timeout(pause_ms)
         return None
 
+    async def already_applied(self, vacancy_id: str) -> bool:
+        """Публичная обёртка над _confirm_applied — часть интерфейса JobAgent.
+        apply_flow.py зовёт её ПЕРЕД apply(), чтобы не откликнуться повторно,
+        если предыдущая попытка на самом деле прошла, а упала уже на
+        последующем шаге (например, при попытке приложить письмо)."""
+        return await self._confirm_applied(vacancy_id)
+
     async def _confirm_applied(self, vacancy_id: str) -> bool:
         """Отдельным заходом проверяет, появилась ли вакансия в откликах."""
         async with async_playwright() as pw:

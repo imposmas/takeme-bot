@@ -28,22 +28,33 @@ async def apply_to_vacancy(vacancy_id: int, cover_letter: str | None) -> tuple[b
             return False, f"Отклик для площадки «{platform.name}» ещё не реализован"
 
         agent = agent_cls()
-        try:
-            ok = await agent.apply(vacancy.external_id, cover_letter)
-        except Exception as exc:
-            ok = False
-            result_message = f"Ошибка при отклике: {exc}"
+        note = None
+
+        # Перепроверяем ПЕРЕД реальным откликом: бывает, что предыдущая
+        # попытка на самом деле прошла, а apply() упал с ошибкой уже на
+        # ПОСЛЕДУЮЩЕМ шаге (например, при попытке приложить письмо) — тогда
+        # повторный клик ✅ не должен откликаться второй раз, только
+        # зафиксировать то, что уже случилось.
+        if await agent.already_applied(vacancy.external_id):
+            ok, result_message = True, "Отклик уже был отправлен ранее — статус обновлён"
         else:
-            result_message = "Отклик отправлен" if ok else (
-                "Не удалось подтвердить отправку — проверь вручную: " + (vacancy.url or "")
-            )
-            # Доп. подробность агента, которая не влезает в bool (например, HH
-            # иногда откликается мгновенно одним кликом, без формы — тогда
-            # письмо, если оно есть, приходится прикладывать отдельным шагом,
-            # и он не всегда получается).
-            note = getattr(agent, "last_apply_note", None)
-            if note:
-                result_message += f"\n({note})"
+            try:
+                ok = await agent.apply(vacancy.external_id, cover_letter)
+            except Exception as exc:
+                ok = False
+                result_message = f"Ошибка при отклике: {exc}"
+            else:
+                result_message = "Отклик отправлен" if ok else (
+                    "Не удалось подтвердить отправку — проверь вручную: " + (vacancy.url or "")
+                )
+                # Доп. подробность агента, которая не влезает в bool (например,
+                # HH иногда откликается мгновенно одним кликом, без формы —
+                # тогда письмо, если оно есть, приходится прикладывать
+                # отдельным шагом, и он не всегда получается).
+                note = getattr(agent, "last_apply_note", None)
+
+        if note:
+            result_message += f"\n({note})"
 
         session.add(
             Application(
