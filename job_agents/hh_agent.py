@@ -48,6 +48,9 @@ class HHAgent(JobAgent):
     def __init__(self, headless: bool = True) -> None:
         # search/apply ходят headless по сохранённой сессии; login() всегда с окном.
         self.headless = headless
+        # Заполняется apply() доп. подробностью, которая не влезает в bool
+        # (например: письмо не приложилось при мгновенном отклике).
+        self.last_apply_note: str | None = None
 
     # --- логин --------------------------------------------------------
 
@@ -363,23 +366,34 @@ class HHAgent(JobAgent):
     async def apply(self, vacancy_id: str, cover_letter: str | None) -> bool:
         """Откликается на вакансию HH.
 
-        Флоу подсмотрен вживую на реальной вакансии (клик по кнопке отклика +
-        заполнение письма — БЕЗ финального сабмита, чтобы не отправить настоящий
-        отклик во время разработки):
-        hh.ru/vacancy/<id> → клик [data-qa=vacancy-response-link-top] → переход
-        на /applicant/vacancy_response?vacancyId=… (резюме подставляется само,
-        если оно одно) → если есть письмо — раскрыть
-        [data-qa=vacancy-response-letter-toggle] и заполнить
-        [data-qa=vacancy-response-popup-form-letter-input] → клик
-        [data-qa=vacancy-response-submit-popup].
+        У HH два разных флоу после клика по кнопке отклика — какой попадётся,
+        заранее не знаем:
 
-        Успех отклика подтверждаем ОТДЕЛЬНЫМ заходом на страницу вакансии и
-        проверкой applicantVacancyResponseStatuses (та же логика, что и
-        «уже откликались» в search()) — это надёжнее, чем гадать про текст
-        тоста/редиректа, который вживую не проверялся.
+        A) Форма отклика (подсмотрено вживую, БЕЗ финального сабмита, чтобы не
+           отправить настоящий отклик во время разработки): переход на
+           /applicant/vacancy_response?vacancyId=… (резюме подставляется само,
+           если оно одно) → раскрыть [data-qa=vacancy-response-letter-toggle] →
+           заполнить [data-qa=vacancy-response-popup-form-letter-input] → клик
+           [data-qa=vacancy-response-submit-popup].
+        B) Мгновенный отклик — сам клик по кнопке уже отправляет отклик БЕЗ
+           формы, письмо (если нужно) прикладывается отдельно через всплывающий
+           после отклика блок. Этот блок не наблюдался вживую (спровоцировать
+           его — значит реально откликнуться), селекторы взяты из фраз
+           интерфейса ("Приложить сопроводительное письмо" /
+           "Написать сопроводительное" / плейсхолдер / "Отправить") — они найдены
+           в переводах, зашитых в саму страницу HH, но сам блок не проверялся.
+           Если что-то не найдётся — не паникуем, откликом это не считаем
+           неудачей, просто письмо будет не приложено (self.last_apply_note).
+
+        Успех отклика (факт того, что он вообще создан) подтверждаем ОТДЕЛЬНЫМ
+        заходом на страницу вакансии и проверкой applicantVacancyResponseStatuses
+        (та же логика, что и «уже откликались» в search()) — это надёжнее, чем
+        гадать про текст тоста/редиректа.
         """
         if not self.has_saved_session():
             raise RuntimeError("Нет сессии HH — сначала выполни login()")
+
+        self.last_apply_note = None
 
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(headless=self.headless)
@@ -407,32 +421,79 @@ class HHAgent(JobAgent):
 
                 await page.wait_for_timeout(1500)
 
-                if cover_letter:
-                    toggle = page.locator(
-                        '[data-qa="vacancy-response-letter-toggle"]'
-                    ).first
-                    if await toggle.count():
-                        await toggle.click()
-                        await page.wait_for_timeout(500)
-                    textarea = page.locator(
-                        '[data-qa="vacancy-response-popup-form-letter-input"]'
-                    ).first
-                    if await textarea.count():
-                        await textarea.fill(cover_letter)
-                        await page.wait_for_timeout(300)
-
                 submit = page.locator('[data-qa="vacancy-response-submit-popup"]').first
-                if await submit.count() == 0:
-                    raise RuntimeError(
-                        "Кнопка отправки отклика не найдена — форма могла измениться"
-                    )
+                if await submit.count():
+                    # Ветка A — обычная форма отклика.
+                    if cover_letter:
+                        toggle = page.locator(
+                            '[data-qa="vacancy-response-letter-toggle"]'
+                        ).first
+                        if await toggle.count():
+                            await toggle.click()
+                            await page.wait_for_timeout(500)
+                        textarea = page.locator(
+                            '[data-qa="vacancy-response-popup-form-letter-input"]'
+                        ).first
+                        if await textarea.count():
+                            await textarea.fill(cover_letter)
+                            await page.wait_for_timeout(300)
+                        else:
+                            self.last_apply_note = (
+                                "поле письма не нашлось на форме — отправлено без письма"
+                            )
 
-                await submit.click()
-                await page.wait_for_timeout(2500)
+                    await submit.click()
+                    await page.wait_for_timeout(2500)
+                else:
+                    # Ветка B — похоже на мгновенный отклик: формы нет, значит клик
+                    # по верхней кнопке уже отправил отклик как есть.
+                    if cover_letter:
+                        attached = await self._attach_letter_after_instant_apply(
+                            page, cover_letter
+                        )
+                        self.last_apply_note = (
+                            "письмо приложено отдельным сообщением (мгновенный отклик)"
+                            if attached
+                            else "мгновенный отклик — письмо НЕ приложено, добавь вручную"
+                        )
             finally:
                 await browser.close()
 
         return await self._confirm_applied(vacancy_id)
+
+    async def _attach_letter_after_instant_apply(self, page: Page, cover_letter: str) -> bool:
+        """Best-effort прикладывание письма после мгновенного отклика (ветка B).
+
+        Селекторы по видимому русскому тексту, а не по data-qa — сам блок вживую
+        не наблюдался (см. apply()), текст взят из переводов на странице HH.
+        Любая неудача — тихий False, а не исключение: отклик уже случился,
+        оставить его без письма не страшно.
+        """
+        try:
+            opener = page.get_by_text("Приложить сопроводительное письмо", exact=False).first
+            if await opener.count() == 0:
+                opener = page.get_by_text("Написать сопроводительное", exact=False).first
+            if await opener.count() == 0:
+                return False
+            await opener.click()
+            await page.wait_for_timeout(500)
+
+            textarea = page.get_by_placeholder(
+                "Почему именно ваша кандидатура должна заинтересовать работодателя"
+            ).first
+            if await textarea.count() == 0:
+                return False
+            await textarea.fill(cover_letter)
+            await page.wait_for_timeout(300)
+
+            submit = page.get_by_role("button", name="Отправить", exact=True).first
+            if await submit.count() == 0:
+                return False
+            await submit.click()
+            await page.wait_for_timeout(1500)
+            return True
+        except Exception:
+            return False
 
     async def _confirm_applied(self, vacancy_id: str) -> bool:
         """Отдельным заходом проверяет, появилась ли вакансия в откликах."""

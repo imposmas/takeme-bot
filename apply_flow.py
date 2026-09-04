@@ -37,6 +37,13 @@ async def apply_to_vacancy(vacancy_id: int, cover_letter: str | None) -> tuple[b
             result_message = "Отклик отправлен" if ok else (
                 "Не удалось подтвердить отправку — проверь вручную: " + (vacancy.url or "")
             )
+            # Доп. подробность агента, которая не влезает в bool (например, HH
+            # иногда откликается мгновенно одним кликом, без формы — тогда
+            # письмо, если оно есть, приходится прикладывать отдельным шагом,
+            # и он не всегда получается).
+            note = getattr(agent, "last_apply_note", None)
+            if note:
+                result_message += f"\n({note})"
 
         session.add(
             Application(
