@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import re
 from html import unescape
 from urllib.parse import urlencode
@@ -107,10 +108,13 @@ class HHAgent(JobAgent):
         """Один профиль фильтров (интерфейс JobAgent).
 
         filters: text, area, work_format[], work_schedule_by_days[],
-                 excluded_text[], order_by, limit
+                 excluded_text[], order_by, limit, known_external_ids
         """
-        return await self._run([dict(filters, profile_name=None)],
-                               int(filters.get("limit", 3)))
+        return await self._run(
+            [dict(filters, profile_name=None)],
+            int(filters.get("limit", 3)),
+            filters.get("known_external_ids"),
+        )
 
     async def search_profiles(
         self,
@@ -121,10 +125,19 @@ class HHAgent(JobAgent):
         excluded_text: list[str] | None = None,
         work_schedule_by_days: list[str] | None = None,
         order_by: str = "relevance",
+        known_external_ids: set[str] | None = None,
     ) -> list[dict]:
         """Несколько профилей за один запуск браузера. Дедуп по id вакансии ДО
         похода за полным текстом. В каждом результате profiles[] — какие профили
-        его поймали."""
+        его поймали.
+
+        known_external_ids — id вакансий, которые уже есть в нашей БД (текст
+        туда уже сохранён раньше): для них НЕ ходим на страницу вакансии
+        повторно за текстом, просто отдаём raw_text="" — вызывающая сторона
+        для уже известных вакансий это поле не читает. Иначе при увеличении
+        лимита выдача снова отдаёт старые вакансии и код лезет на их страницы
+        заново без всякой пользы — лишняя нагрузка на HH.
+        """
         filter_list = [
             {
                 "text": text or prof.get("text", ""),
@@ -137,11 +150,18 @@ class HHAgent(JobAgent):
             }
             for prof in profiles
         ]
-        return await self._run(filter_list, limit_per_profile)
+        return await self._run(filter_list, limit_per_profile, known_external_ids)
 
-    async def _run(self, filter_list: list[dict], limit_each: int) -> list[dict]:
+    async def _run(
+        self,
+        filter_list: list[dict],
+        limit_each: int,
+        known_external_ids: set[str] | None = None,
+    ) -> list[dict]:
         if not self.has_saved_session():
             raise RuntimeError("Нет сессии HH — сначала выполни login()")
+
+        known_external_ids = known_external_ids or set()
 
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(headless=self.headless)
@@ -158,15 +178,23 @@ class HHAgent(JobAgent):
                     name = filt.get("profile_name")
                     if name and name not in cur["profiles"]:
                         cur["profiles"].append(name)
-                await page.wait_for_timeout(1500)
+                await self._human_pause(page)
 
             results = list(merged.values())
             for item in results:
+                if item["external_id"] in known_external_ids:
+                    continue  # текст уже есть в БД — не ходим на HH второй раз
                 item.update(await self._fetch_details(context, item["url"]))
-                await page.wait_for_timeout(2000)
+                await self._human_pause(page)
 
             await browser.close()
         return results
+
+    @staticmethod
+    async def _human_pause(page: Page, low_ms: int = 2500, high_ms: int = 6000) -> None:
+        """Пауза со случайным разбросом вместо фиксированной — не долбим площадку
+        механическим ритмом."""
+        await page.wait_for_timeout(random.uniform(low_ms, high_ms))
 
     @staticmethod
     def _search_url(filt: dict, limit: int) -> str:

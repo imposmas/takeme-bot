@@ -90,6 +90,19 @@ async def main() -> None:
         await agent.login()
     await record_agent_session("hh", agent.storage_state_path)
 
+    async with Session() as session:
+        hh_id = (
+            await session.execute(select(Platform.id).where(Platform.name == "hh"))
+        ).scalar_one()
+        known_external_ids = set(
+            (
+                await session.execute(
+                    select(Vacancy.external_id).where(Vacancy.platform_id == hh_id)
+                )
+            ).scalars()
+        )
+    print(f"Уже в БД (текст переиспользуем, повторно не открываем): {len(known_external_ids)}")
+
     print(
         f"Поиск: text={HH_SEARCH_TEXT!r}, профилей={len(HH_SEARCH_PROFILES)}, "
         f"по {LIMIT_PER_PROFILE} из каждого"
@@ -100,6 +113,7 @@ async def main() -> None:
         text=HH_SEARCH_TEXT,
         excluded_text=HH_EXCLUDED_WORDS,
         work_schedule_by_days=HH_WORK_SCHEDULE,
+        known_external_ids=known_external_ids,
     )
     print(f"Уникальных вакансий после склейки профилей: {len(vacancies)}")
     vacancies = vacancies[:TOTAL_LIMIT]
