@@ -65,6 +65,9 @@ async def _run_apply(status_msg: Message, vacancy: Vacancy, cover_letter: str | 
 
 @dp.callback_query(F.data.startswith("skip:"))
 async def on_skip(callback: CallbackQuery) -> None:
+    """Пропуск — не финал: карточка остаётся живой (можно откликнуться позже),
+    прячем только саму кнопку «Пропустить». Полностью кнопки уходят лишь
+    после реального отклика (см. _run_apply)."""
     vacancy_id = _vacancy_id(callback.data)
     async with Session() as session:
         vacancy = await session.get(Vacancy, vacancy_id)
@@ -74,8 +77,10 @@ async def on_skip(callback: CallbackQuery) -> None:
         vacancy.status = "skipped"
         await session.commit()
 
-    await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer("❌ Пропущено")
+    await callback.message.edit_text(
+        f"{callback.message.html_text}\n\n<i>❌ Пропущено</i>",
+        reply_markup=vacancy_keyboard(vacancy_id, include_skip=False),
+    )
     await callback.answer()
 
 

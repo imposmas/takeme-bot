@@ -4,17 +4,18 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 
-def vacancy_keyboard(vacancy_id: int) -> InlineKeyboardMarkup:
-    """vacancy_id — id строки в нашей таблице vacancies (не id на площадке)."""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="✅ Откликнуться", callback_data=f"apply:{vacancy_id}"),
-                InlineKeyboardButton(text="❌ Пропустить", callback_data=f"skip:{vacancy_id}"),
-                InlineKeyboardButton(text="✏️ Своим текстом", callback_data=f"custom:{vacancy_id}"),
-            ]
-        ]
-    )
+def vacancy_keyboard(vacancy_id: int, *, include_skip: bool = True) -> InlineKeyboardMarkup:
+    """vacancy_id — id строки в нашей таблице vacancies (не id на площадке).
+
+    include_skip=False — вариант для уже пропущенной вакансии: «Пропустить»
+    больше не нужен (уже пропущена), но ✅/✏️ остаются — пропуск не финал,
+    к вакансии можно вернуться и откликнуться позже. Финал — только реальный
+    отклик (там кнопки прячутся полностью, см. takemebot.py)."""
+    row = [InlineKeyboardButton(text="✅ Откликнуться", callback_data=f"apply:{vacancy_id}")]
+    if include_skip:
+        row.append(InlineKeyboardButton(text="❌ Пропустить", callback_data=f"skip:{vacancy_id}"))
+    row.append(InlineKeyboardButton(text="✏️ Своим текстом", callback_data=f"custom:{vacancy_id}"))
+    return InlineKeyboardMarkup(inline_keyboard=[row])
 
 
 def approval_keyboard(vacancy_id: int) -> InlineKeyboardMarkup:
