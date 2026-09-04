@@ -13,11 +13,14 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from sqlalchemy import select
 
+import llm_match
 from config import (
+    ANTHROPIC_API_KEY,
     HH_EXCLUDED_WORDS,
     HH_SEARCH_PROFILES,
     HH_SEARCH_TEXT,
     HH_WORK_SCHEDULE,
+    MATCH_THRESHOLD,
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
 )
@@ -48,12 +51,18 @@ def _fmt_salary(sfrom: int | None, sto: int | None, currency: str | None) -> str
 
 def _card(row: Vacancy, data: dict) -> str:
     profiles = ", ".join(data.get("profiles") or []) or "—"
+    match_line = (
+        f"\n🎯 {row.match_score}/100 — {row.match_reason}"
+        if row.match_score is not None
+        else ""
+    )
     return (
         f"<b>{row.title or '—'}</b>\n"
         f"{row.company or '—'}\n"
         f"{_fmt_salary(row.salary_from, row.salary_to, data.get('salary_currency'))}\n"
         f"{row.url or ''}\n"
         f"<i>{profiles}</i> · <code>#{data['key']}</code>"
+        f"{match_line}"
     )
 
 
@@ -68,6 +77,8 @@ async def _already_applied(session, vacancy_id: int) -> bool:
 async def main() -> None:
     if not TELEGRAM_CHAT_ID:
         raise RuntimeError("TELEGRAM_CHAT_ID не задан в .env")
+    if not ANTHROPIC_API_KEY:
+        raise RuntimeError("ANTHROPIC_API_KEY не задан в .env — нужен для LLM-матчинга")
 
     await init_db()
 
@@ -138,6 +149,25 @@ async def main() -> None:
 
                 if row.status in ("sent_to_tg", "skipped", "applied"):
                     print(f"  {data['key']}: status={row.status} — повторно не шлю")
+                    continue
+
+                if row.match_score is None:
+                    try:
+                        score, reason = await llm_match.match(
+                            row.title, row.company, row.raw_description
+                        )
+                        row.match_score = score
+                        row.match_reason = reason
+                        await session.flush()
+                        print(f"  {data['key']}: match_score={score} — {reason}")
+                    except Exception as exc:
+                        print(f"  {data['key']}: ошибка LLM-матчинга ({exc}) — шлю без фильтра")
+
+                if row.match_score is not None and row.match_score < MATCH_THRESHOLD:
+                    print(
+                        f"  {data['key']}: match_score={row.match_score} < "
+                        f"{MATCH_THRESHOLD} — не шлю"
+                    )
                     continue
 
                 await bot.send_message(TELEGRAM_CHAT_ID, _card(row, data))

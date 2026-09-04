@@ -3,3 +3,4 @@ venv/
 *.db
 sessions/
 __pycache__/
+resume.md

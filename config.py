@@ -53,3 +53,18 @@ HH_SEARCH_PROFILES = [
 DB_PATH = os.getenv("DB_PATH", "takeme.db")
 DB_URL = f"sqlite+aiosqlite:///{DB_PATH}"
 SESSIONS_DIR = os.getenv("SESSIONS_DIR", "sessions")
+
+# --- LLM-матчинг вакансии с резюме ---
+
+# Путь к резюме в формате markdown (личные данные, в git не коммитим).
+RESUME_PATH = os.getenv("RESUME_PATH", "resume.md")
+
+# Haiku — дёшево и достаточно для оценочной задачи (сравнить стек/опыт с резюме).
+# Если на практике будет мазать (пропускать хорошие вакансии/пропускать мусор),
+# поменять на claude-sonnet-5 — при таком объёме (десятки в день) разница в
+# цене не принципиальна, решает качество.
+MATCH_MODEL = os.getenv("MATCH_MODEL", "claude-haiku-4-5")
+
+# Порог 0-100, ниже которого вакансия не уходит в Telegram (но остаётся в БД
+# с проставленным match_score/match_reason — чтобы не гонять LLM повторно).
+MATCH_THRESHOLD = int(os.getenv("MATCH_THRESHOLD", "60"))

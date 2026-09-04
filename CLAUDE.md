@@ -197,8 +197,11 @@ HH_SEARCH_TEXT=Java          # необязательно, дефолт в confi
       login + search. Поиск по двум профилям (РФ/удалёнка и НН/удалёнка+гибрид),
       фильтры 5/2 + excluded_text, дедуп по id вакансии из URL, проверка
       «уже откликался» (HH + таблица applications). Разовый прогон — `search_once.py`.
-- [ ] LLM-матчинг: прогон raw_description через Haiku → match_score/match_reason,
-      в Telegram слать только подходящее (сейчас шлётся всё подряд)
+- [x] LLM-матчинг: прогон raw_description через Haiku (`llm_match.py`, tool use
+      submit_match) → match_score/match_reason, кешируется в БД (считается один
+      раз на вакансию). В Telegram уходит только score ≥ MATCH_THRESHOLD (сейчас
+      60), в карточке видно оценку и обоснование. Резюме — `resume.md` в корне
+      (личные данные, не коммитится, см. RESUME_PATH в config.py)
 - [ ] Inline-кнопки [✅ Откликнуться] [❌ Пропустить] [✏️ Своим текстом] в боте
 - [ ] `HHAgent.apply()` + генерация сопроводительных писем (Sonnet)
 - [ ] Планировщик (apscheduler) — весь цикл раз в 1-2 часа
