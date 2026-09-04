@@ -26,7 +26,7 @@ import apply_flow
 import llm_cover_letter
 from config import TELEGRAM_BOT_TOKEN
 from db import Session, Vacancy, init_db
-from tg_keyboards import approval_keyboard
+from tg_keyboards import approval_keyboard, vacancy_keyboard
 
 dp = Dispatcher(storage=MemoryStorage())
 
@@ -50,11 +50,17 @@ async def _get_vacancy(vacancy_id: int) -> Vacancy | None:
 
 
 async def _run_apply(status_msg: Message, vacancy: Vacancy, cover_letter: str | None) -> None:
-    """Общий хвост apply-флоу: дёрнуть агента и отредактировать статусное сообщение."""
+    """Общий хвост apply-флоу: дёрнуть агента и отредактировать статусное сообщение.
+
+    При неудаче возвращаем кнопки [✅/❌/✏️] обратно — иначе карточка
+    становится тупиком, откуда больше ничего не сделать."""
     ok, result_message = await apply_flow.apply_to_vacancy(vacancy.id, cover_letter)
     icon = "✅" if ok else "⚠️"
     letter_block = f"\n\n<i>Письмо:</i>\n{escape(cover_letter)}" if cover_letter else ""
-    await status_msg.edit_text(f"{icon} {escape(result_message)}{letter_block}")
+    await status_msg.edit_text(
+        f"{icon} {escape(result_message)}{letter_block}",
+        reply_markup=None if ok else vacancy_keyboard(vacancy.id),
+    )
 
 
 @dp.callback_query(F.data.startswith("skip:"))
@@ -92,7 +98,10 @@ async def on_apply(callback: CallbackQuery) -> None:
             vacancy.title, vacancy.company, vacancy.raw_description
         )
     except Exception as exc:
-        await status_msg.edit_text(f"⚠️ Не смог сгенерировать письмо: {escape(str(exc))}")
+        await status_msg.edit_text(
+            f"⚠️ Не смог сгенерировать письмо: {escape(str(exc))}",
+            reply_markup=vacancy_keyboard(vacancy_id),
+        )
         return
 
     _pending_letters[vacancy_id] = cover_letter
@@ -123,8 +132,10 @@ async def on_approve(callback: CallbackQuery) -> None:
 async def on_cancel(callback: CallbackQuery) -> None:
     vacancy_id = _vacancy_id(callback.data)
     _pending_letters.pop(vacancy_id, None)
-    await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer("❌ Отменено, отклик не отправлен")
+    await callback.message.edit_text(
+        "❌ Отменено, отклик не отправлен. Можно попробовать снова:",
+        reply_markup=vacancy_keyboard(vacancy_id),
+    )
     await callback.answer()
 
 
