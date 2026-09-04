@@ -15,3 +15,16 @@ def vacancy_keyboard(vacancy_id: int) -> InlineKeyboardMarkup:
             ]
         ]
     )
+
+
+def approval_keyboard(vacancy_id: int) -> InlineKeyboardMarkup:
+    """После генерации письма — подтвердить/переписать/отменить, до реального отклика."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Отправить", callback_data=f"approve:{vacancy_id}"),
+                InlineKeyboardButton(text="✏️ Своим текстом", callback_data=f"custom:{vacancy_id}"),
+                InlineKeyboardButton(text="❌ Отмена", callback_data=f"cancel:{vacancy_id}"),
+            ]
+        ]
+    )
