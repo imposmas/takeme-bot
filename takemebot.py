@@ -65,11 +65,13 @@ def _with_status(vacancy: Vacancy, suffix: str) -> str:
 
 async def _finish_apply(
     bot: Bot, chat_id: int, message_id: int, vacancy: Vacancy, cover_letter: str | None
-) -> None:
+) -> bool:
     """Общий хвост apply-флоу: дёрнуть агента и отредактировать ту же карточку.
 
     При неудаче возвращаем кнопки [✅/❌] обратно — иначе карточка становится
-    тупиком, откуда больше ничего не сделать."""
+    тупиком, откуда больше ничего не сделать. Возвращает ok — вызывающая
+    сторона (on_custom_text) шлёт отдельный маячок в чат и не должна врать
+    об успехе, если тут на самом деле ошибка."""
     ok, result_message = await apply_flow.apply_to_vacancy(vacancy.id, cover_letter)
     icon = "✅" if ok else "⚠️"
     letter_block = f"\n\n<i>Письмо:</i>\n{escape(cover_letter)}" if cover_letter else ""
@@ -79,6 +81,7 @@ async def _finish_apply(
         text=_with_status(vacancy, f"{icon} {escape(result_message)}{letter_block}"),
         reply_markup=None if ok else vacancy_keyboard(vacancy.id),
     )
+    return ok
 
 
 @dp.callback_query(F.data.startswith("skip:"))
@@ -213,10 +216,12 @@ async def on_custom_text(message: Message, state: FSMContext) -> None:
         text=_with_status(vacancy, "⏳ Откликаюсь…"),
         reply_markup=None,
     )
-    await _finish_apply(message.bot, chat_id, message_id, vacancy, message.text)
+    ok = await _finish_apply(message.bot, chat_id, message_id, vacancy, message.text)
     # Карточка обновилась выше по чату — маячок в текущем месте, чтобы не
-    # пришлось её искать.
-    await message.answer("Готово, смотри карточку выше ⬆️")
+    # пришлось её искать. Текст зависит от реального результата — не врём об
+    # успехе, если там на самом деле ошибка.
+    icon = "✅" if ok else "⚠️"
+    await message.answer(f"{icon} Смотри карточку выше ⬆️")
 
 
 @dp.message(F.text)
