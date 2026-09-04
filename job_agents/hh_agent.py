@@ -505,35 +505,41 @@ class HHAgent(JobAgent):
         Любая неудача — тихий False, а не исключение: отклик уже случился,
         оставить его без письма не страшно, просто предупредим пользователя
         через self.last_apply_note.
+
+        Живой прогон показал: элементы на месте, но HH не всегда успевает
+        проиндексировать свежий отклик в /applicant/negotiations сразу же —
+        поэтому каждый шаг ждёт своего элемента с повторными попытками, а не
+        падает с первого захода.
         """
         try:
-            await page.goto("https://hh.ru/applicant/negotiations",
-                            wait_until="domcontentloaded")
-            await page.wait_for_timeout(2000)
-
-            item = page.locator(
-                f'[data-qa="negotiations-item"]:has(a[href*="{vacancy_id}"])'
-            ).first
-            if await item.count() == 0:
+            item = await self._retry_find(
+                lambda: self._negotiation_item(page, vacancy_id),
+                reload_url="https://hh.ru/applicant/negotiations",
+                page=page,
+            )
+            if item is None:
                 return False
 
             chat_btn = item.locator('[data-qa="open_chat"]').first
             if await chat_btn.count() == 0:
                 return False
             await chat_btn.click()
-            await page.wait_for_timeout(2500)
 
-            chat_frame = next(
-                (fr for fr in page.frames if "chatik.hh.ru/chat" in (fr.url or "")),
-                None,
+            chat_frame = await self._retry_find(
+                lambda: self._chat_frame(page), page=page, attempts=6, pause_ms=1000
             )
             if chat_frame is None:
                 return False
 
-            action = chat_frame.locator(
-                '[data-qa="chatik-chat-message-applicant-action"]'
-            ).first
-            if await action.count():
+            action = await self._retry_find(
+                lambda: self._first_or_none(
+                    chat_frame.locator('[data-qa="chatik-chat-message-applicant-action"]')
+                ),
+                page=page,
+                attempts=5,
+                pause_ms=800,
+            )
+            if action is not None:
                 await action.click()
                 await page.wait_for_timeout(1000)
 
@@ -548,6 +554,56 @@ class HHAgent(JobAgent):
             return True
         except Exception:
             return False
+
+    @staticmethod
+    def _negotiation_item(page: Page, vacancy_id: str):
+        loc = page.locator(
+            f'[data-qa="negotiations-item"]:has(a[href*="{vacancy_id}"])'
+        ).first
+        return loc
+
+    @staticmethod
+    def _chat_frame(page: Page):
+        return next(
+            (fr for fr in page.frames if "chatik.hh.ru/chat" in (fr.url or "")), None
+        )
+
+    @staticmethod
+    async def _first_or_none(locator):
+        return locator.first if await locator.count() else None
+
+    @staticmethod
+    async def _retry_find(
+        finder,
+        *,
+        page: Page,
+        reload_url: str | None = None,
+        attempts: int = 4,
+        pause_ms: int = 1500,
+    ):
+        """Повторяет finder() до первого непустого результата.
+
+        finder может вернуть локатор (проверяем .count()) или уже готовый
+        объект/None (например, найденный фрейм). reload_url, если задан,
+        перезагружает страницу перед каждой попыткой — нужно для списка
+        откликов, который может ещё не знать о только что созданном отклике.
+        """
+        for attempt in range(attempts):
+            if reload_url:
+                await page.goto(reload_url, wait_until="domcontentloaded")
+                await page.wait_for_timeout(pause_ms)
+            result = finder()
+            if asyncio.iscoroutine(result):
+                result = await result
+            if result is not None:
+                if hasattr(result, "count"):
+                    if await result.count():
+                        return result
+                else:
+                    return result
+            if not reload_url and attempt < attempts - 1:
+                await page.wait_for_timeout(pause_ms)
+        return None
 
     async def _confirm_applied(self, vacancy_id: str) -> bool:
         """Отдельным заходом проверяет, появилась ли вакансия в откликах."""
