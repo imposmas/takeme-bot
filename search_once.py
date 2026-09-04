@@ -26,46 +26,12 @@ from config import (
 )
 from db import Application, Platform, Session, Vacancy, init_db, record_agent_session
 from job_agents.hh_agent import HHAgent
+from tg_cards import render_card
 from tg_keyboards import vacancy_keyboard
 
-LIMIT_PER_PROFILE = 30  # сколько брать из каждого профиля поиска
-TOTAL_LIMIT = 60         # добиваем бэклог: уже известные — бесплатно (кеш)
+LIMIT_PER_PROFILE = 60  # сколько брать из каждого профиля поиска
+TOTAL_LIMIT = 120         # добиваем бэклог: уже известные — бесплатно (кеш)
 SEND_LIMIT = TOTAL_LIMIT  # сколько всего карточек отправить в Telegram за прогон
-
-_CURRENCY = {"RUR": "₽", "RUB": "₽", "USD": "$", "EUR": "€",
-             "KZT": "₸", "UAH": "₴", "BYR": "Br", "BYN": "Br"}
-
-
-def _fmt_salary(sfrom: int | None, sto: int | None, currency: str | None) -> str:
-    sign = _CURRENCY.get(currency or "", currency or "₽")
-
-    def money(n: int) -> str:
-        return f"{n:,}".replace(",", " ") + f" {sign}"
-
-    if sfrom and sto:
-        return f"{money(sfrom)} – {money(sto)}"
-    if sfrom:
-        return f"от {money(sfrom)}"
-    if sto:
-        return f"до {money(sto)}"
-    return "з/п не указана"
-
-
-def _card(row: Vacancy, data: dict) -> str:
-    profiles = ", ".join(data.get("profiles") or []) or "—"
-    match_line = (
-        f"\n🎯 {row.match_score}/100 — {row.match_reason}"
-        if row.match_score is not None
-        else ""
-    )
-    return (
-        f"<b>{row.title or '—'}</b>\n"
-        f"{row.company or '—'}\n"
-        f"{_fmt_salary(row.salary_from, row.salary_to, data.get('salary_currency'))}\n"
-        f"{row.url or ''}\n"
-        f"<i>{profiles}</i> · <code>#{data['key']}</code>"
-        f"{match_line}"
-    )
 
 
 async def _already_applied(session, vacancy_id: int) -> bool:
@@ -150,11 +116,24 @@ async def main() -> None:
                         company=data["company"],
                         salary_from=data["salary_from"],
                         salary_to=data["salary_to"],
+                        salary_currency=data.get("salary_currency"),
+                        work_format=data.get("work_format"),
+                        experience=data.get("experience"),
                         raw_description=data["raw_text"],
                         status="new",
                     )
                     session.add(row)
                     await session.flush()
+                else:
+                    # Бэкфилл для строк, заведённых до появления этих колонок —
+                    # эти поля есть уже на странице выдачи, дополнительный
+                    # поход на HH для них не нужен.
+                    if row.salary_currency is None and data.get("salary_currency"):
+                        row.salary_currency = data["salary_currency"]
+                    if row.work_format is None and data.get("work_format"):
+                        row.work_format = data["work_format"]
+                    if row.experience is None and data.get("experience"):
+                        row.experience = data["experience"]
 
                 # «Я уже откликалась на это?» — HH + наша БД.
                 applied = bool(data.get("applied_on_hh")) or await _already_applied(
@@ -190,7 +169,7 @@ async def main() -> None:
                     continue
 
                 await bot.send_message(
-                    TELEGRAM_CHAT_ID, _card(row, data),
+                    TELEGRAM_CHAT_ID, render_card(row),
                     reply_markup=vacancy_keyboard(row.id),
                 )
                 row.status = "sent_to_tg"

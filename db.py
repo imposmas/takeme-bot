@@ -18,6 +18,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
     select,
+    text,
 )
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -58,6 +59,9 @@ class Vacancy(Base):
     company: Mapped[str | None] = mapped_column(String)
     salary_from: Mapped[int | None] = mapped_column(Integer)
     salary_to: Mapped[int | None] = mapped_column(Integer)
+    salary_currency: Mapped[str | None] = mapped_column(String)
+    work_format: Mapped[str | None] = mapped_column(String)  # "REMOTE,HYBRID" — коды HH через запятую
+    experience: Mapped[str | None] = mapped_column(String)   # код HH: noExperience/between1And3/…
     raw_description: Mapped[str | None] = mapped_column(Text)
     match_score: Mapped[float | None] = mapped_column(Float)
     match_reason: Mapped[str | None] = mapped_column(Text)
@@ -97,9 +101,23 @@ Session = async_sessionmaker(engine, expire_on_commit=False)
 
 
 async def init_db() -> None:
-    """Создаёт таблицы (если их нет) и наполняет справочник платформ."""
+    """Создаёт таблицы (если их нет), доращивает колонки на существующих
+    (SQLite/create_all новые таблицы не трогает существующие — своя лёгкая
+    миграция, Alembic для одного файла БД избыточен) и наполняет справочник
+    платформ."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+        existing_cols = {
+            row[1] for row in (await conn.execute(text("PRAGMA table_info(vacancies)")))
+        }
+        for col, ddl_type in (
+            ("salary_currency", "TEXT"),
+            ("work_format", "TEXT"),
+            ("experience", "TEXT"),
+        ):
+            if col not in existing_cols:
+                await conn.execute(text(f"ALTER TABLE vacancies ADD COLUMN {col} {ddl_type}"))
 
     async with Session() as session:
         have = set((await session.execute(select(Platform.name))).scalars())

@@ -303,9 +303,25 @@ class HHAgent(JobAgent):
             "salary_from": comp.get("from"),
             "salary_to": comp.get("to"),
             "salary_currency": comp.get("currencyCode"),  # RUR / USD / EUR / …
+            "work_format": ",".join(HHAgent._extract_work_formats(raw)),
+            "experience": raw.get("workExperience"),
             "raw_text": "",
             "applied_on_hh": None,  # заполнит _fetch_details
         }
+
+    @staticmethod
+    def _extract_work_formats(raw: dict) -> list[str]:
+        """workFormats на странице выдачи и на самой вакансии — разной формы:
+        [{"workFormatsElement": [...]}] в выдаче, ["REMOTE"] на странице
+        вакансии. Приводим к плоскому списку кодов HH (REMOTE/HYBRID/ON_SITE)."""
+        formats = raw.get("workFormats") or []
+        result: list[str] = []
+        for item in formats:
+            if isinstance(item, dict):
+                result.extend(item.get("workFormatsElement") or [])
+            elif isinstance(item, str):
+                result.append(item)
+        return result
 
     # --- фолбэк на селекторы, если стейт не достали ----------------
 
@@ -335,6 +351,8 @@ class HHAgent(JobAgent):
                     "salary_from": None,
                     "salary_to": None,
                     "salary_currency": None,
+                    "work_format": "",
+                    "experience": None,
                     "raw_text": "",
                     "applied_on_hh": None,
                 }

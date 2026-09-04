@@ -6,6 +6,12 @@
 только после апрува, а не сразу. «Своим текстом» — только на этом этапе:
 писать письмо вслепую до черновика смысла нет.
 
+Важно: весь этот флоу происходит В ОДНОМ И ТОМ ЖЕ сообщении (карточка
+вакансии редактируется на месте — генерация/черновик/результат), а не
+плодит отдельные сообщения. Раньше письмо приходило отдельным сообщением,
+и было непонятно, к какой вакансии оно относится, приходилось листать
+вверх в поисках карточки.
+
 Карточки шлёт search_once.py (позже — планировщик), этот процесс должен быть
 запущен параллельно, чтобы ловить нажатия. Отклик — через apply_flow.py,
 который не знает про Telegram и просто дёргает нужного JobAgent.
@@ -27,6 +33,7 @@ import apply_flow
 import llm_cover_letter
 from config import TELEGRAM_BOT_TOKEN
 from db import Session, Vacancy, init_db
+from tg_cards import render_card
 from tg_keyboards import approval_keyboard, vacancy_keyboard
 
 dp = Dispatcher(storage=MemoryStorage())
@@ -50,16 +57,26 @@ async def _get_vacancy(vacancy_id: int) -> Vacancy | None:
         return await session.get(Vacancy, vacancy_id)
 
 
-async def _run_apply(status_msg: Message, vacancy: Vacancy, cover_letter: str | None) -> None:
-    """Общий хвост apply-флоу: дёрнуть агента и отредактировать статусное сообщение.
+def _with_status(vacancy: Vacancy, suffix: str) -> str:
+    """Карточка вакансии + текущий статус — одно сообщение вместо простыни
+    отдельным сообщением, которую потом приходится искать."""
+    return f"{render_card(vacancy)}\n\n{suffix}"
 
-    При неудаче возвращаем кнопки [✅/❌/✏️] обратно — иначе карточка
-    становится тупиком, откуда больше ничего не сделать."""
+
+async def _finish_apply(
+    bot: Bot, chat_id: int, message_id: int, vacancy: Vacancy, cover_letter: str | None
+) -> None:
+    """Общий хвост apply-флоу: дёрнуть агента и отредактировать ту же карточку.
+
+    При неудаче возвращаем кнопки [✅/❌] обратно — иначе карточка становится
+    тупиком, откуда больше ничего не сделать."""
     ok, result_message = await apply_flow.apply_to_vacancy(vacancy.id, cover_letter)
     icon = "✅" if ok else "⚠️"
     letter_block = f"\n\n<i>Письмо:</i>\n{escape(cover_letter)}" if cover_letter else ""
-    await status_msg.edit_text(
-        f"{icon} {escape(result_message)}{letter_block}",
+    await bot.edit_message_text(
+        chat_id=chat_id,
+        message_id=message_id,
+        text=_with_status(vacancy, f"{icon} {escape(result_message)}{letter_block}"),
         reply_markup=None if ok else vacancy_keyboard(vacancy.id),
     )
 
@@ -68,7 +85,7 @@ async def _run_apply(status_msg: Message, vacancy: Vacancy, cover_letter: str | 
 async def on_skip(callback: CallbackQuery) -> None:
     """Пропуск — не финал: карточка остаётся живой (можно откликнуться позже),
     прячем только саму кнопку «Пропустить». Полностью кнопки уходят лишь
-    после реального отклика (см. _run_apply)."""
+    после реального отклика (см. _finish_apply)."""
     vacancy_id = _vacancy_id(callback.data)
     async with Session() as session:
         vacancy = await session.get(Vacancy, vacancy_id)
@@ -79,7 +96,7 @@ async def on_skip(callback: CallbackQuery) -> None:
         await session.commit()
 
     await callback.message.edit_text(
-        f"{callback.message.html_text}\n\n<i>❌ Пропущено</i>",
+        _with_status(vacancy, "❌ Пропущено"),
         reply_markup=vacancy_keyboard(vacancy_id, include_skip=False),
     )
     await callback.answer()
@@ -87,32 +104,34 @@ async def on_skip(callback: CallbackQuery) -> None:
 
 @dp.callback_query(F.data.startswith("apply:"))
 async def on_apply(callback: CallbackQuery) -> None:
-    """✅ на карточке вакансии — генерирует письмо и показывает на подтверждение,
-    отклик пока НЕ отправляется."""
+    """✅ на карточке вакансии — генерирует письмо и показывает на подтверждение
+    прямо в той же карточке, отклик пока НЕ отправляется."""
     vacancy_id = _vacancy_id(callback.data)
     await callback.answer("Генерирую письмо…")
-    await callback.message.edit_reply_markup(reply_markup=None)
 
     vacancy = await _get_vacancy(vacancy_id)
     if vacancy is None:
         await callback.message.answer("Вакансия не найдена в БД")
         return
 
-    status_msg = await callback.message.answer("⏳ Генерирую сопроводительное письмо…")
+    await callback.message.edit_text(
+        _with_status(vacancy, "⏳ Генерирую сопроводительное письмо…"),
+        reply_markup=None,
+    )
     try:
         cover_letter = await llm_cover_letter.generate(
             vacancy.title, vacancy.company, vacancy.raw_description
         )
     except Exception as exc:
-        await status_msg.edit_text(
-            f"⚠️ Не смог сгенерировать письмо: {escape(str(exc))}",
+        await callback.message.edit_text(
+            _with_status(vacancy, f"⚠️ Не смог сгенерировать письмо: {escape(str(exc))}"),
             reply_markup=vacancy_keyboard(vacancy_id),
         )
         return
 
     _pending_letters[vacancy_id] = cover_letter
-    await status_msg.edit_text(
-        f"<i>Черновик письма для «{escape(vacancy.title or '')}»:</i>\n\n{escape(cover_letter)}",
+    await callback.message.edit_text(
+        _with_status(vacancy, f"<i>Черновик письма:</i>\n{escape(cover_letter)}"),
         reply_markup=approval_keyboard(vacancy_id),
     )
 
@@ -123,23 +142,31 @@ async def on_approve(callback: CallbackQuery) -> None:
     vacancy_id = _vacancy_id(callback.data)
     cover_letter = _pending_letters.pop(vacancy_id, None)
     await callback.answer()
-    await callback.message.edit_reply_markup(reply_markup=None)
 
     vacancy = await _get_vacancy(vacancy_id)
     if vacancy is None:
         await callback.message.answer("Вакансия не найдена в БД")
         return
 
-    status_msg = await callback.message.answer(f"⏳ Откликаюсь на «{escape(vacancy.title or '')}»…")
-    await _run_apply(status_msg, vacancy, cover_letter)
+    await callback.message.edit_text(_with_status(vacancy, "⏳ Откликаюсь…"), reply_markup=None)
+    await _finish_apply(
+        callback.bot, callback.message.chat.id, callback.message.message_id,
+        vacancy, cover_letter,
+    )
 
 
 @dp.callback_query(F.data.startswith("cancel:"))
 async def on_cancel(callback: CallbackQuery) -> None:
     vacancy_id = _vacancy_id(callback.data)
     _pending_letters.pop(vacancy_id, None)
+
+    vacancy = await _get_vacancy(vacancy_id)
+    if vacancy is None:
+        await callback.message.answer("Вакансия не найдена в БД")
+        return
+
     await callback.message.edit_text(
-        "❌ Отменено, отклик не отправлен. Можно попробовать снова:",
+        _with_status(vacancy, "❌ Отменено, отклик не отправлен. Можно попробовать снова:"),
         reply_markup=vacancy_keyboard(vacancy_id),
     )
     await callback.answer()
@@ -149,17 +176,31 @@ async def on_cancel(callback: CallbackQuery) -> None:
 async def on_custom(callback: CallbackQuery, state: FSMContext) -> None:
     vacancy_id = _vacancy_id(callback.data)
     _pending_letters.pop(vacancy_id, None)
-    await state.update_data(vacancy_id=vacancy_id)
+    # Текст письма придёт отдельным сообщением от пользователя — запоминаем,
+    # какую карточку тогда редактировать, вместо того чтобы плодить новую.
+    await state.update_data(
+        vacancy_id=vacancy_id,
+        chat_id=callback.message.chat.id,
+        message_id=callback.message.message_id,
+    )
     await state.set_state(WaitingCustomText.text)
-    await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer("✏️ Пришли текст сопроводительного письма следующим сообщением")
+
+    vacancy = await _get_vacancy(vacancy_id)
+    if vacancy is None:
+        await callback.message.answer("Вакансия не найдена в БД")
+        return
+
+    await callback.message.edit_text(
+        _with_status(vacancy, "✏️ Пришли текст сопроводительного письма следующим сообщением"),
+        reply_markup=None,
+    )
     await callback.answer()
 
 
 @dp.message(StateFilter(WaitingCustomText.text), F.text)
 async def on_custom_text(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
-    vacancy_id = data["vacancy_id"]
+    vacancy_id, chat_id, message_id = data["vacancy_id"], data["chat_id"], data["message_id"]
     await state.clear()
 
     vacancy = await _get_vacancy(vacancy_id)
@@ -167,8 +208,15 @@ async def on_custom_text(message: Message, state: FSMContext) -> None:
         await message.answer("Вакансия не найдена в БД")
         return
 
-    status_msg = await message.answer(f"⏳ Откликаюсь на «{escape(vacancy.title or '')}»…")
-    await _run_apply(status_msg, vacancy, message.text)
+    await message.bot.edit_message_text(
+        chat_id=chat_id, message_id=message_id,
+        text=_with_status(vacancy, "⏳ Откликаюсь…"),
+        reply_markup=None,
+    )
+    await _finish_apply(message.bot, chat_id, message_id, vacancy, message.text)
+    # Карточка обновилась выше по чату — маячок в текущем месте, чтобы не
+    # пришлось её искать.
+    await message.answer("Готово, смотри карточку выше ⬆️")
 
 
 @dp.message(F.text)
