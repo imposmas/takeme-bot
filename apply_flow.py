@@ -41,8 +41,19 @@ async def apply_to_vacancy(vacancy_id: int, cover_letter: str | None) -> tuple[b
             try:
                 ok = await agent.apply(vacancy.external_id, cover_letter)
             except Exception as exc:
-                ok = False
-                result_message = f"Ошибка при отклике: {exc}"
+                # Само исключение не значит, что отклик не прошёл — он мог
+                # реально уйти, а упасть уже на СЛЕДУЮЩЕМ шаге (например, при
+                # верификации отдельным заходом на страницу — сетевой
+                # таймаут). Перепроверяем перед тем, как признать неудачу.
+                try:
+                    ok = await agent.already_applied(vacancy.external_id)
+                except Exception:
+                    ok = False
+                result_message = (
+                    f"Отклик всё же прошёл, несмотря на ошибку ({exc})"
+                    if ok
+                    else f"Ошибка при отклике: {exc}"
+                )
             else:
                 result_message = "Отклик отправлен" if ok else (
                     "Не удалось подтвердить отправку — проверь вручную: " + (vacancy.url or "")
