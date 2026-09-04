@@ -68,3 +68,7 @@ MATCH_MODEL = os.getenv("MATCH_MODEL", "claude-haiku-4-5")
 # Порог 0-100, ниже которого вакансия не уходит в Telegram (но остаётся в БД
 # с проставленным match_score/match_reason — чтобы не гонять LLM повторно).
 MATCH_THRESHOLD = int(os.getenv("MATCH_THRESHOLD", "60"))
+
+# Как часто takemebot.py проверяет статусы откликов на HH (просмотрено/отказ) —
+# один заход на /applicant/negotiations раз в столько секунд, не долбим площадку.
+RESPONSE_CHECK_INTERVAL_SECONDS = int(os.getenv("RESPONSE_CHECK_INTERVAL_SECONDS", str(30 * 60)))

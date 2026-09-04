@@ -38,6 +38,11 @@ class JobAgent(ABC):
     async def apply(self, vacancy_id: str, cover_letter: str | None) -> bool:
         """Откликается на вакансию. Возвращает True при успехе."""
 
+    async def check_negotiations(self) -> list[dict]:
+        """Статусы всех откликов одним заходом (просмотрено/отказ/…) — для
+        мониторинга. Площадка без такой возможности — просто пустой список."""
+        return []
+
     async def already_applied(self, vacancy_id: str) -> bool:
         """Проверка «отклик уже реально существует на площадке» — до вызова
         apply(), чтобы не откликнуться повторно (например, после ошибки,

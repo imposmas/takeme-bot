@@ -644,6 +644,85 @@ class HHAgent(JobAgent):
             finally:
                 await browser.close()
 
+    # --- мониторинг статусов откликов (просмотрено/отказ) ---------------
+
+    async def check_negotiations(self) -> list[dict]:
+        """Статус по всем откликам одним проходом по /applicant/negotiations —
+        без захода на каждую вакансию отдельно (там прямо в списке есть тег
+        «не просмотрено» / «просмотрено» / «отказ»). Пагинация — ?page=N по
+        20 штук, идём, пока страница не окажется пустой.
+
+        Возвращает список словарей: external_id, url, title, company,
+        response_status (код: not-viewed/viewed/discard/…),
+        response_label (текст тега на русском, как показывает сам HH).
+        """
+        if not self.has_saved_session():
+            raise RuntimeError("Нет сессии HH — сначала выполни login()")
+
+        results: list[dict] = []
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=self.headless)
+            context = await browser.new_context(storage_state=self.storage_state_path)
+            page = await context.new_page()
+            try:
+                page_num = 0
+                while True:
+                    url = "https://hh.ru/applicant/negotiations"
+                    if page_num:
+                        url += f"?page={page_num}"
+                    await page.goto(url, wait_until="domcontentloaded")
+                    await page.wait_for_timeout(2000)
+
+                    items = page.locator('[data-qa="negotiations-item"]')
+                    count = await items.count()
+                    if count == 0:
+                        break
+
+                    for i in range(count):
+                        item = items.nth(i)
+                        parsed = await self._parse_negotiation_item(item)
+                        if parsed:
+                            results.append(parsed)
+
+                    page_num += 1
+                    await self._human_pause(page, 1500, 3000)
+            finally:
+                await browser.close()
+        return results
+
+    @staticmethod
+    async def _parse_negotiation_item(item) -> dict | None:
+        link = item.locator('a[href*="/vacancy/"]').first
+        if await link.count() == 0:
+            return None
+        href = await link.get_attribute("href") or ""
+        ext_id = vacancy_id_from_url(href)
+        if not ext_id:
+            return None
+
+        title_el = item.locator('[data-qa="negotiations-item-vacancy"]').first
+        company_el = item.locator('[data-qa="negotiations-item-company"]').first
+        title = (await title_el.inner_text()).strip() if await title_el.count() else None
+        company = (await company_el.inner_text()).strip() if await company_el.count() else None
+
+        tag_el = item.locator('[data-qa*="negotiations-tag"]').first
+        status, label = None, None
+        if await tag_el.count():
+            attr = await tag_el.get_attribute("data-qa") or ""
+            for token in attr.split():
+                if token.startswith("negotiations-item-"):
+                    status = token[len("negotiations-item-"):]
+            label = (await tag_el.inner_text()).strip()
+
+        return {
+            "external_id": ext_id,
+            "url": f"https://hh.ru/vacancy/{ext_id}",
+            "title": title,
+            "company": company,
+            "response_status": status,
+            "response_label": label,
+        }
+
 
 if __name__ == "__main__":
     asyncio.run(HHAgent().login())

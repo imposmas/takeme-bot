@@ -66,6 +66,10 @@ class Vacancy(Base):
     match_score: Mapped[float | None] = mapped_column(Float)
     match_reason: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String, default="new")
+    # Статус со стороны работодателя (мониторинг, не наш собственный статус
+    # выше): код HH — not-viewed / viewed / discard (отказ) / …
+    employer_response: Mapped[str | None] = mapped_column(String)
+    employer_response_at: Mapped[datetime | None] = mapped_column(DateTime)
     found_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     platform: Mapped["Platform"] = relationship(back_populates="vacancies")
@@ -115,6 +119,8 @@ async def init_db() -> None:
             ("salary_currency", "TEXT"),
             ("work_format", "TEXT"),
             ("experience", "TEXT"),
+            ("employer_response", "TEXT"),
+            ("employer_response_at", "TIMESTAMP"),
         ):
             if col not in existing_cols:
                 await conn.execute(text(f"ALTER TABLE vacancies ADD COLUMN {col} {ddl_type}"))

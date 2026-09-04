@@ -15,6 +15,10 @@
 Карточки шлёт search_once.py (позже — планировщик), этот процесс должен быть
 запущен параллельно, чтобы ловить нажатия. Отклик — через apply_flow.py,
 который не знает про Telegram и просто дёргает нужного JobAgent.
+
+Плюс фоновый цикл (_monitor_loop): раз в RESPONSE_CHECK_INTERVAL_SECONDS
+проверяет статусы уже отправленных откликов на HH (просмотрено/отказ,
+monitor_responses.py) и шлёт уведомление при новом отказе.
 """
 import asyncio
 import logging
@@ -31,11 +35,13 @@ from aiogram.types import CallbackQuery, Message
 
 import apply_flow
 import llm_cover_letter
-from config import TELEGRAM_BOT_TOKEN
+import monitor_responses
+from config import RESPONSE_CHECK_INTERVAL_SECONDS, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 from db import Session, Vacancy, init_db
 from tg_cards import render_card
 from tg_keyboards import approval_keyboard, vacancy_keyboard
 
+log = logging.getLogger(__name__)
 dp = Dispatcher(storage=MemoryStorage())
 
 # vacancy_id -> сгенерированное письмо, ждущее подтверждения ✅/❌/✏️.
@@ -241,10 +247,26 @@ async def on_text(message: Message) -> None:
     await message.answer("Бот работает. Кнопки на карточках вакансий обрабатываются автоматически.")
 
 
+async def _monitor_loop(bot: Bot) -> None:
+    """Раз в RESPONSE_CHECK_INTERVAL_SECONDS — проверка статусов откликов на
+    HH. Ошибка одного прохода не должна убивать цикл, просто пробуем снова
+    на следующем витке."""
+    if not TELEGRAM_CHAT_ID:
+        return
+    while True:
+        await asyncio.sleep(RESPONSE_CHECK_INTERVAL_SECONDS)
+        try:
+            rejections = await monitor_responses.check_and_notify(bot, int(TELEGRAM_CHAT_ID))
+            log.info("monitor: проверка откликов, новых отказов: %s", rejections)
+        except Exception:
+            log.exception("monitor: ошибка проверки откликов")
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     await init_db()
     bot = Bot(TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    asyncio.create_task(_monitor_loop(bot))
     await dp.start_polling(bot)
 
 
